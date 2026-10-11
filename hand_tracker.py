@@ -70,22 +70,26 @@ class HandTracker:
         # Deteksi tangan menggunakan Tasks API mode VIDEO (temporal continuity)
         self.results = self.detector.detect_for_video(mp_image, current_ts_ms)
 
-        # Gambar manual di atas OpenCV
+        # Gambar manual di atas OpenCV dengan estetika Sci-Fi Anti-Aliased
         if self.results and self.results.hand_landmarks and draw:
             for hand_lms in self.results.hand_landmarks:
                 h, w, c = img.shape
                 pts = {}
                 
-                # Simpan titik koordinat & Gambar titik
+                # Simpan titik koordinat
                 for id, lm in enumerate(hand_lms):
                     cx, cy = int(lm.x * w), int(lm.y * h)
                     pts[id] = (cx, cy)
-                    cv2.circle(img, (cx, cy), 5, (255, 0, 255), cv2.FILLED)
                 
-                # Gambar garis penghubung sendi tangan
+                # Gambar garis penghubung sendi tangan (Neon Cyan, Anti-Aliased)
                 for p1, p2 in self.HAND_CONNECTIONS:
                     if p1 in pts and p2 in pts:
-                        cv2.line(img, pts[p1], pts[p2], (0, 255, 0), 2)
+                        cv2.line(img, pts[p1], pts[p2], (255, 220, 0), 2, cv2.LINE_AA)
+                
+                # Gambar titik sendi (Gold/Amber Glow di sendi, Anti-Aliased)
+                for id, (cx, cy) in pts.items():
+                    cv2.circle(img, (cx, cy), 4, (0, 215, 255), cv2.FILLED, cv2.LINE_AA)
+                    cv2.circle(img, (cx, cy), 6, (255, 255, 255), 1, cv2.LINE_AA)
         
         return img
 
