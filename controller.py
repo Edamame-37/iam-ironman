@@ -6,9 +6,10 @@ import pyautogui
 import pygetwindow as gw
 
 class SystemController:
-    # Deadzone diturunkan secara drastis dari 15 menjadi 5 karena input dari 
-    # 1 Euro Filter sudah suci dari Jitter. Tuas kini jauh lebih sensitif & akurat.
-    def __init__(self, sensitivity=0.8, deadzone=5):
+    # Deadzone diatur pada 4 derajat rotasi fisik.
+    # Karena input kemiringan telah menggunakan sudut 3D derajat murni dan disaring oleh
+    # 1 Euro Filter, nilai 4 derajat memberikan respon cepat namun kebal dari tremor otot.
+    def __init__(self, sensitivity=0.8, deadzone=4):
         self.sensitivity = sensitivity 
         self.deadzone = deadzone       
         
@@ -20,7 +21,7 @@ class SystemController:
         self.has_paged_in_current_swipe = False 
         
         self.smoothed_speed = 0.0
-        self.speed_ema_alpha = 0.4 # Naik dari 0.3, akselerasi lebih responsif
+        self.speed_ema_alpha = 0.4 # Akselerasi scroll yang responsif
 
     def is_presentation_active(self):
         try:
