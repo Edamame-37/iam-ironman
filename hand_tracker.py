@@ -82,8 +82,13 @@ class HandTracker:
 
     def get_position(self, img, hand_no=0):
         """
-        Mendapatkan posisi (x, y) dari setiap sendi/landmark tangan yang terdeteksi.
-        Mengembalikan list berisi [id_sendi, koordinat_x, koordinat_y].
+        Mendapatkan posisi sendi/landmark tangan yang terdeteksi dalam koordinat 2D dan 3D.
+        Mengembalikan list berisi:
+        [id, cx, cy, cz, norm_x, norm_y, norm_z]
+        - id: Index sendi MediaPipe (0-20)
+        - cx, cy: Koordinat piksel layar (0 hingga w, 0 hingga h)
+        - cz: Estimasi kedalaman optik dalam skala piksel
+        - norm_x, norm_y, norm_z: Koordinat 3D murni ternormalisasi dari MediaPipe (invarian terhadap resolusi)
         """
         lm_list = []
         if self.results and self.results.hand_landmarks:
@@ -93,5 +98,8 @@ class HandTracker:
                 h, w, c = img.shape
                 for id, lm in enumerate(my_hand):
                     cx, cy = int(lm.x * w), int(lm.y * h)
-                    lm_list.append([id, cx, cy])
+                    cz = int(lm.z * w)
+                    # Menyimpan koordinat piksel 2D, kedalaman cz, dan koordinat 3D asli ternormalisasi
+                    lm_list.append([id, cx, cy, cz, lm.x, lm.y, lm.z])
         return lm_list
+
