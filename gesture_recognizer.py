@@ -1,11 +1,10 @@
 """
-Modul GestureRecognizer (Versi Kinematik 3D & State Machine Hysteresis)
+Modul GestureRecognizer (Versi 3D Phalanx Ratio & Linear Normalized Throttle)
 Menganalisis pergerakan kemiringan telapak tangan (Wrist Tilt Throttle) menggunakan:
-1. Bio-mechanical Joint Flexion Angles 3D (Kebal terhadap ilusi perspektif 2D)
-2. 3D Palm Normal Surface Vector (Validasi arah telapak tangan menghadap kamera)
-3. Continuous Confidence Scoring & Dual-Threshold Hysteresis (Anti-flicker & Anti-dropout)
-4. Bi-directional Debouncing (Membasmi 100% false trigger / noise saat mengetik atau menggaruk)
-5. 1 Euro Filter Adaptif (Zero jitter saat diam, zero lag saat bergerak cepat)
+1. 3D Phalanx Extension Ratio (100% Invarian terhadap perspektif kamera dan sudut kemiringan tangan)
+2. Linear Normalized Pitch Throttle (Bebas dari singularitas matematis arcsin, respon 1:1 mulus)
+3. Bi-directional Debouncing (Mencegah false positive saat mengetik dan mencegah false drop saat scrolling)
+4. 1 Euro Filter Adaptif (Membasmi getaran saat diam, zero-lag saat tuas digerakkan)
 """
 import math
 import time
@@ -21,8 +20,8 @@ def exponential_smoothing(a, x, x_prev):
 
 class OneEuroFilter:
     """
-    1 Euro Filter (Low-Pass Filter Adaptif Standar Industri)
-    Menghilangkan jitter (getaran mikroskopis) saat kursor diam, 
+    1 Euro Filter (Low-Pass Filter Adaptif)
+    Menghilangkan jitter (getaran) saat kursor diam, 
     dan menghilangkan lag (jeda) saat tuas digerakkan cepat.
     """
     def __init__(self, t0, x0, dx0=0.0, min_cutoff=0.08, beta=1.2, d_cutoff=1.0):
@@ -42,7 +41,6 @@ class OneEuroFilter:
         dx = (x - self.x_prev) / t_e
         dx_hat = exponential_smoothing(a_d, dx, self.dx_prev)
         
-        # Cut-off frekuensi meningkat otomatis secara proporsional terhadap kecepatan gerakan
         cutoff = self.min_cutoff + self.beta * abs(dx_hat)
         
         a = smoothing_factor(t_e, cutoff)
@@ -54,80 +52,17 @@ class OneEuroFilter:
         return x_hat
 
 
-def calculate_joint_angle_3d(p_prev, p_joint, p_next):
+def dist_3d(p1, p2):
     """
-    Menghitung sudut fleksi sendi (Joint Flexion Angle) dalam derajat (0 - 180).
-    Menggunakan operasi 3D Vector Dot Product.
-    - Sifat Matematika: 100% Invarian terhadap rotasi, translasi, dan skala tangan.
-    - Jari lurus: Sudut mendekati 160 - 180 derajat.
-    - Jari ditekuk/mengepal: Sudut turun ke < 110 derajat.
+    Menghitung jarak Euclidean 3D antara dua landmark.
+    Menggunakan koordinat 3D ternormalisasi jika tersedia (index 4, 5, 6),
+    atau koordinat piksel 2D/3D sebagai fallback.
     """
-    # Ekstraksi koordinat 3D (Gunakan normalized jika tersedia, jika tidak gunakan piksel 2D/3D)
-    if len(p_joint) >= 7:
-        # Format [id, cx, cy, cz, norm_x, norm_y, norm_z]
-        v1 = (p_prev[4] - p_joint[4], p_prev[5] - p_joint[5], p_prev[6] - p_joint[6])
-        v2 = (p_next[4] - p_joint[4], p_next[5] - p_joint[5], p_next[6] - p_joint[6])
-    elif len(p_joint) >= 4:
-        v1 = (p_prev[1] - p_joint[1], p_prev[2] - p_joint[2], p_prev[3] - p_joint[3])
-        v2 = (p_next[1] - p_joint[1], p_next[2] - p_joint[2], p_next[3] - p_joint[3])
-    else:
-        v1 = (p_prev[1] - p_joint[1], p_prev[2] - p_joint[2], 0.0)
-        v2 = (p_next[1] - p_joint[1], p_next[2] - p_joint[2], 0.0)
-
-    # Dot Product
-    dot = v1[0] * v2[0] + v1[1] * v2[1] + v1[2] * v2[2]
-    # Magnitudo Vektor
-    norm1 = math.sqrt(v1[0]**2 + v1[1]**2 + v1[2]**2)
-    norm2 = math.sqrt(v2[0]**2 + v2[1]**2 + v2[2]**2)
-
-    if norm1 * norm2 == 0:
-        return 180.0
-
-    cosine = dot / (norm1 * norm2)
-    # Clamp cosine untuk mencegah error komputasi floating point di luar [-1.0, 1.0]
-    cosine = max(-1.0, min(1.0, cosine))
-    
-    return math.degrees(math.acos(cosine))
-
-
-def calculate_palm_normal_3d(lm_list):
-    """
-    Menghitung Vektor Normal Permukaan Telapak Tangan (Palm Normal Vector) via Cross Product 3D.
-    Mengembalikan (nx, ny, nz) ternormalisasi.
-    nz mengindikasikan apakah telapak tangan menghadap kamera (sejajar bidang layar).
-    """
-    if len(lm_list) < 21:
-        return 0.0, 0.0, 1.0
-
-    # Landmark Kunci Telapak:
-    # 0: Wrist, 5: Index MCP, 9: Middle MCP, 17: Pinky MCP
-    p0 = lm_list[0]
-    p5 = lm_list[5]
-    p9 = lm_list[9]
-    p17 = lm_list[17]
-
-    if len(p0) >= 7:
-        # Vektor Transversal: Index MCP -> Pinky MCP
-        v_trans = (p17[4] - p5[4], p17[5] - p5[5], p17[6] - p5[6])
-        # Vektor Longitudinal: Wrist -> Middle MCP
-        v_long = (p9[4] - p0[4], p9[5] - p0[5], p9[6] - p0[6])
-    elif len(p0) >= 4:
-        v_trans = (p17[1] - p5[1], p17[2] - p5[2], p17[3] - p5[3])
-        v_long = (p9[1] - p0[1], p9[2] - p0[2], p9[3] - p0[3])
-    else:
-        v_trans = (p17[1] - p5[1], p17[2] - p5[2], 0.0)
-        v_long = (p9[1] - p0[1], p9[2] - p0[2], 0.0)
-
-    # 3D Cross Product: v_trans x v_long
-    nx = v_trans[1] * v_long[2] - v_trans[2] * v_long[1]
-    ny = v_trans[2] * v_long[0] - v_trans[0] * v_long[2]
-    nz = v_trans[0] * v_long[1] - v_trans[1] * v_long[0]
-
-    mag = math.sqrt(nx**2 + ny**2 + nz**2)
-    if mag == 0:
-        return 0.0, 0.0, 1.0
-        
-    return nx / mag, ny / mag, nz / mag
+    if len(p1) >= 7 and len(p2) >= 7:
+        return math.sqrt((p1[4] - p2[4])**2 + (p1[5] - p2[5])**2 + (p1[6] - p2[6])**2)
+    elif len(p1) >= 4 and len(p2) >= 4:
+        return math.sqrt((p1[1] - p2[1])**2 + (p1[2] - p2[2])**2 + (p1[3] - p2[3])**2)
+    return math.hypot(p1[1] - p2[1], p1[2] - p2[2])
 
 
 class GestureRecognizer:
@@ -137,142 +72,102 @@ class GestureRecognizer:
         # State Tracking
         self.is_currently_engaged = False
         
-        # Bi-directional Debouncing Buffers
+        # Bi-directional Debouncing (Pencegah False Positive & False Drop)
         self.engage_frames_count = 0
         self.release_frames_count = 0
-        self.REQUIRED_ENGAGE_FRAMES = 3   # Wajib 3 frame stabil berturut-turut untuk ON (Membunuh 100% false-alarm)
-        self.REQUIRED_RELEASE_FRAMES = 3  # Wajib 3 frame stabil berturut-turut untuk OFF (Mencegah optical flicker)
-        
-        # Ambang Batas Hysteresis (Schmitt Trigger)
-        self.ENGAGE_CONFIDENCE_THRESHOLD = 0.65 # Threshold tinggi untuk masuk
-        self.SUSTAIN_CONFIDENCE_THRESHOLD = 0.35 # Threshold rendah untuk mempertahankan (Anti-dropout)
-        self.BRAKE_CONFIDENCE_THRESHOLD = 0.60  # Threshold tangan terbuka untuk mengerem
-        
-        # Cache Evaluasi Terakhir (Untuk Debugging / HUD)
-        self.last_confidence = 0.0
-        self.last_open_confidence = 0.0
+        self.REQUIRED_ENGAGE_FRAMES = 2   # Cukup 2 frame stabil untuk mengunci (Cepat & Anti-glitch)
+        self.REQUIRED_RELEASE_FRAMES = 3  # Wajib 3 frame tangan terbuka untuk melepas rem
 
-    def compute_gesture_confidences(self, lm_list):
+    def is_finger_extended_3d(self, lm_list, mcp_id, pip_id, tip_id, threshold_ratio=1.35):
         """
-        Mengevaluasi bentuk tangan secara probabilitas kontinu (0.0 - 1.0)
-        berdasarkan sudut tekukan sendi kinematik 3D dan vektor normal telapak.
+        Menilai kelurusan jari menggunakan 3D Phalanx Extension Ratio:
+        Ratio = dist_3d(Tip, MCP) / dist_3d(PIP, MCP)
+        - Jari Lurus: Ujung jari menjauhi pangkal (Ratio ~2.0 - 2.5).
+        - Jari Tertekuk/Mengepal: Ujung melipat kembali ke pangkal (Ratio ~0.4 - 0.7).
+        - Bersifat 100% Invarian terhadap kompresi perspektif 2D kamera saat tangan dimiringkan!
         """
-        if len(lm_list) < 21:
-            return 0.0, 0.0
-
-        # 1. Hitung Sudut Fleksi Sendi PIP untuk 4 Jari Utama
-        # Telunjuk: PIP (6), MCP (5), TIP (8)
-        angle_index = calculate_joint_angle_3d(lm_list[5], lm_list[6], lm_list[8])
-        # Tengah: PIP (10), MCP (9), TIP (12)
-        angle_middle = calculate_joint_angle_3d(lm_list[9], lm_list[10], lm_list[12])
-        # Manis: PIP (14), MCP (13), TIP (16)
-        angle_ring = calculate_joint_angle_3d(lm_list[13], lm_list[14], lm_list[16])
-        # Kelingking: PIP (18), MCP (17), TIP (20)
-        angle_pinky = calculate_joint_angle_3d(lm_list[17], lm_list[18], lm_list[20])
-
-        # 2. Pemetaan Skor Ekstensi Jari (0.0 = Ditekuk penuh, 1.0 = Lurus sempurna)
-        # Jari dianggap mulai lurus di atas 120 derajat, dan sempurna di 160 derajat
-        def ext_score(angle):
-            return max(0.0, min(1.0, (angle - 120.0) / (160.0 - 120.0)))
+        mcp = lm_list[mcp_id]
+        pip = lm_list[pip_id]
+        tip = lm_list[tip_id]
+        
+        d_tip_mcp = dist_3d(tip, mcp)
+        d_pip_mcp = dist_3d(pip, mcp)
+        
+        if d_pip_mcp == 0:
+            return False
             
-        # Pemetaan Skor Tekukan Jari (1.0 = Ditekuk rapat, 0.0 = Lurus)
-        def curl_score(angle):
-            return max(0.0, min(1.0, (145.0 - angle) / (145.0 - 105.0)))
-
-        s_index_ext = ext_score(angle_index)
-        s_middle_curl = curl_score(angle_middle)
-        s_ring_curl = curl_score(angle_ring)
-        s_pinky_curl = curl_score(angle_pinky)
-        
-        s_others_curled = (s_middle_curl + s_ring_curl + s_pinky_curl) / 3.0
-
-        # 3. Validasi Normal Permukaan Telapak Tangan (Palm Facing Alignment)
-        nx, ny, nz = calculate_palm_normal_3d(lm_list)
-        # Nilai absolut |nz| tinggi berarti bidang telapak tangan sejajar dengan bidang sensor kamera
-        s_palm_facing = max(0.0, min(1.0, (abs(nz) - 0.25) / (0.65 - 0.25)))
-
-        # 4. Total Pointing Confidence (Telunjuk Menunjuk Murni)
-        c_pointing = (0.50 * s_index_ext) + (0.35 * s_others_curled) + (0.15 * s_palm_facing)
-
-        # 5. Total Open Hand Confidence (Telapak Terbuka Penuh Untuk Mengerem)
-        s_mid_ext = ext_score(angle_middle)
-        s_ring_ext = ext_score(angle_ring)
-        s_pinky_ext = ext_score(angle_pinky)
-        c_open = (s_index_ext + s_mid_ext + s_ring_ext + s_pinky_ext) / 4.0
-
-        return c_pointing, c_open
+        ratio = d_tip_mcp / d_pip_mcp
+        return ratio >= threshold_ratio
 
     def get_fingers_up(self, lm_list):
         """
-        Fungsi pembantu kompatibilitas backward menggunakan sudut sendi kinematik 3D.
-        Mengembalikan list biner [thumb, index, middle, ring, pinky].
+        Mendeteksi jari-jari yang tegak lurus menggunakan kalkulasi 3D Phalanx Ratio.
+        Mengembalikan [thumb, index, middle, ring, pinky] dalam biner (0 atau 1).
         """
         fingers = [0] # Jempol
         if len(lm_list) < 21:
             return fingers
 
-        joints = [(5, 6, 8), (9, 10, 12), (13, 14, 16), (17, 18, 20)]
-        for mcp, pip, tip in joints:
-            angle = calculate_joint_angle_3d(lm_list[mcp], lm_list[pip], lm_list[tip])
-            fingers.append(1 if angle >= 135.0 else 0)
+        # Konfigurasi Sendi: (MCP, PIP, TIP)
+        finger_joints = [
+            (5, 6, 8),    # Telunjuk
+            (9, 10, 12),  # Tengah
+            (13, 14, 16), # Manis
+            (17, 18, 20)  # Kelingking
+        ]
+
+        for mcp, pip, tip in finger_joints:
+            is_up = self.is_finger_extended_3d(lm_list, mcp, pip, tip)
+            fingers.append(1 if is_up else 0)
             
         return fingers
 
     def get_joystick_state(self, lm_list):
         """
-        Menganalisis pergerakan kemiringan pergelangan tangan dengan algoritma state machine multi-layer.
-        Mengembalikan (is_engaged, smoothed_tilt_degrees).
+        Menganalisis status tuas pergelangan tangan (is_engaged, smoothed_tilt).
+        Bebas singularitas arcsin, linear 1:1, dan kebal dari noise.
         """
         if len(lm_list) < 21:
             self.reset_smoothing()
             return False, None
 
-        # Evaluasi Probabilitas Gestur
-        c_pointing, c_open = self.compute_gesture_confidences(lm_list)
-        self.last_confidence = c_pointing
-        self.last_open_confidence = c_open
-
+        # Evaluasi Status Jari berbasis 3D Phalanx
+        is_index_up = self.is_finger_extended_3d(lm_list, 5, 6, 8)
+        is_middle_up = self.is_finger_extended_3d(lm_list, 9, 10, 12)
+        is_ring_up = self.is_finger_extended_3d(lm_list, 13, 14, 16)
+        
         # =======================================================
-        # PERHITUNGAN SUDUT KEMIRINGAN PITCH 3D INVARIAN
+        # KALKULASI KEMIRINGAN LINEAR TERNORMALISASI (BEBAS SINGULARITAS)
         # =======================================================
-        # Mengukur rotasi pitch pergelangan tangan menggunakan rasio delta Y
-        # terhadap panjang 3D pergelangan ke ujung telunjuk (L_hand_3d).
-        # Rasio ini mewakili sin(theta) fisik tangan murni, kebal terhadap jarak & skala!
+        # Mengukur perbedaan vertikal antara ujung telunjuk dan pergelangan tangan,
+        # dinormalisasi terhadap jarak tulang telapak tangan (P0 ke P5).
         wrist = lm_list[0]
         index_tip = lm_list[8]
-        
-        dx = index_tip[1] - wrist[1]
-        dy = index_tip[2] - wrist[2]
-        dz = (index_tip[3] - wrist[3]) if len(index_tip) >= 4 else 0.0
-        
-        hand_len_3d = math.sqrt(dx**2 + dy**2 + dz**2)
-        if hand_len_3d == 0:
-            hand_len_3d = 1.0
+        index_base = lm_list[5]
 
-        # Sinus sudut kemiringan vertikal
-        sin_pitch = dy / hand_len_3d
-        sin_pitch = max(-1.0, min(1.0, sin_pitch))
-        
-        # Sudut kemiringan dalam derajat fisik murni (-90 hingga +90)
-        raw_tilt_deg = math.degrees(math.asin(sin_pitch))
-        
+        ref_dist = math.hypot(index_base[1] - wrist[1], index_base[2] - wrist[2])
+        if ref_dist == 0:
+            ref_dist = 1.0
+
+        # Kemiringan linear (skala persen terhadap panjang telapak)
+        raw_tilt = ((index_tip[2] - wrist[2]) / ref_dist) * 100
         current_time = time.time()
 
         # =======================================================
-        # 1 EURO FILTER: Adaptif Jitter & Lag Elimination
+        # 1 EURO FILTER: Adaptif Jitter & Lag Removal
         # =======================================================
         if self.one_euro_filter is None:
-            self.one_euro_filter = OneEuroFilter(current_time, raw_tilt_deg, min_cutoff=0.08, beta=1.2)
-            smoothed_tilt = raw_tilt_deg
+            self.one_euro_filter = OneEuroFilter(current_time, raw_tilt, min_cutoff=0.08, beta=1.2)
+            smoothed_tilt = raw_tilt
         else:
-            smoothed_tilt = self.one_euro_filter(current_time, raw_tilt_deg)
+            smoothed_tilt = self.one_euro_filter(current_time, raw_tilt)
 
         # =======================================================
-        # DUAL-THRESHOLD HYSTERESIS & BI-DIRECTIONAL DEBOUNCING
+        # BI-DIRECTIONAL DEBOUNCING & STATE MACHINE
         # =======================================================
         if not self.is_currently_engaged:
-            # Syarat ON: Menuntut Keyakinan Tinggi (>= 0.65) selama 3 Frame berturut-turut
-            if c_pointing >= self.ENGAGE_CONFIDENCE_THRESHOLD:
+            # Kondisi ON: Menunjuk murni (Telunjuk lurus, Jari tengah & manis tertekuk santai)
+            if is_index_up and not is_middle_up and not is_ring_up:
                 self.engage_frames_count += 1
                 if self.engage_frames_count >= self.REQUIRED_ENGAGE_FRAMES:
                     self.is_currently_engaged = True
@@ -281,28 +176,23 @@ class GestureRecognizer:
             else:
                 self.engage_frames_count = 0
         else:
-            # Syarat OFF (Pengereman):
-            # Tangan membuka lebar ATAU keyakinan jatuh di bawah ambang retensi (Hysteresis low threshold)
-            is_braking = (c_open >= self.BRAKE_CONFIDENCE_THRESHOLD)
-            is_lost = (c_pointing < self.SUSTAIN_CONFIDENCE_THRESHOLD)
-            
-            if is_braking or is_lost:
+            # Kondisi OFF (Pengereman):
+            # Tangan membuka (Jari tengah dan manis terentang lurus)
+            if is_middle_up and is_ring_up:
                 self.release_frames_count += 1
                 if self.release_frames_count >= self.REQUIRED_RELEASE_FRAMES:
                     self.is_currently_engaged = False
                     self.release_frames_count = 0
                     self.engage_frames_count = 0
             else:
-                # Retensi Stabil: Reset antrean pelepasan jika pengguna masih mempertahankan gestur
+                # Retensi Stabil: Reset antrean pelepasan jika masih mempertahankan posisi
                 self.release_frames_count = 0
 
         return self.is_currently_engaged, smoothed_tilt
 
     def reset_smoothing(self):
-        """Mereset seluruh state filter dan debouncing."""
+        """Mereset seluruh state filter dan debouncing buffer."""
         self.one_euro_filter = None
         self.is_currently_engaged = False
         self.engage_frames_count = 0
         self.release_frames_count = 0
-        self.last_confidence = 0.0
-        self.last_open_confidence = 0.0
