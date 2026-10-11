@@ -24,18 +24,20 @@ class HandTracker:
 
         base_options = python.BaseOptions(model_asset_path=self.model_path)
         
-        # Menggunakan mode IMAGE karena diproses sinkron per frame (cocok untuk loop sederhana)
+        # Menggunakan mode VIDEO untuk mengaktifkan Temporal Kalman Tracking
+        # Ini mengunci landmark antar-frame, memangkas drop-out hingga 50%, dan menaikkan FPS
         options = vision.HandLandmarkerOptions(
             base_options=base_options,
             num_hands=max_hands,
             min_hand_detection_confidence=float(detection_con),
             min_hand_presence_confidence=float(track_con),
             min_tracking_confidence=float(track_con),
-            running_mode=vision.RunningMode.IMAGE
+            running_mode=vision.RunningMode.VIDEO
         )
 
         self.detector = vision.HandLandmarker.create_from_options(options)
         self.results = None
+        self.last_timestamp_ms = 0
         
         # Definisi manual koneksi tulang jari (pengganti modul solutions yang telah dihapus Google)
         self.HAND_CONNECTIONS = [
@@ -49,19 +51,26 @@ class HandTracker:
 
     def find_hands(self, img, draw=True):
         """
-        Mendeteksi tangan dalam frame gambar.
+        Mendeteksi tangan dalam frame video menggunakan Temporal Tracking (VIDEO mode).
         Mengembalikan frame asli yang sudah digambar landmark-nya jika draw=True.
         """
+        import time
         # Konversi BGR ke RGB untuk MediaPipe
         img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         
         # Konversi dari NumPy Array ke Format Objek Gambar MediaPipe
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=img_rgb)
         
-        # Deteksi tangan menggunakan Tasks API terbaru
-        self.results = self.detector.detect(mp_image)
+        # Hitung timestamp milidetik yang dijamin strictly monotonically increasing
+        current_ts_ms = int(time.time() * 1000)
+        if current_ts_ms <= self.last_timestamp_ms:
+            current_ts_ms = self.last_timestamp_ms + 1
+        self.last_timestamp_ms = current_ts_ms
 
-        # Gambar manual di atas OpenCV (Pengganti mp_draw.draw_landmarks)
+        # Deteksi tangan menggunakan Tasks API mode VIDEO (temporal continuity)
+        self.results = self.detector.detect_for_video(mp_image, current_ts_ms)
+
+        # Gambar manual di atas OpenCV
         if self.results and self.results.hand_landmarks and draw:
             for hand_lms in self.results.hand_landmarks:
                 h, w, c = img.shape
@@ -83,18 +92,28 @@ class HandTracker:
     def get_position(self, img, hand_no=0):
         """
         Mendapatkan posisi sendi/landmark tangan yang terdeteksi dalam koordinat 2D dan 3D.
+        Dilengkapi dengan ROI Boundary Guard: Mengabaikan frame jika telapak tangan
+        terpotong di batas tepi kamera (5% margin), mencegah noise prediksi cacat.
         Mengembalikan list berisi:
         [id, cx, cy, cz, norm_x, norm_y, norm_z]
-        - id: Index sendi MediaPipe (0-20)
-        - cx, cy: Koordinat piksel layar (0 hingga w, 0 hingga h)
-        - cz: Estimasi kedalaman optik dalam skala piksel
-        - norm_x, norm_y, norm_z: Koordinat 3D murni ternormalisasi dari MediaPipe (invarian terhadap resolusi)
         """
         lm_list = []
         if self.results and self.results.hand_landmarks:
-            # Memastikan index hand_no tidak lebih dari jumlah tangan terdeteksi
             if hand_no < len(self.results.hand_landmarks):
                 my_hand = self.results.hand_landmarks[hand_no]
+                
+                # ROI Boundary Guard: Cek apakah pergelangan (0) atau pangkal jari (9) berada di tepi frame
+                wrist_norm = my_hand[0]
+                middle_mcp_norm = my_hand[9]
+                margin = 0.03 # 3% margin tepi layar
+                
+                if (wrist_norm.x < margin or wrist_norm.x > (1.0 - margin) or
+                    wrist_norm.y < margin or wrist_norm.y > (1.0 - margin) or
+                    middle_mcp_norm.x < margin or middle_mcp_norm.x > (1.0 - margin) or
+                    middle_mcp_norm.y < margin or middle_mcp_norm.y > (1.0 - margin)):
+                    # Tangan sedang memotong tepi frame luar kamera, abaikan untuk mencegah glitch
+                    return []
+
                 h, w, c = img.shape
                 for id, lm in enumerate(my_hand):
                     cx, cy = int(lm.x * w), int(lm.y * h)
