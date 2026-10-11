@@ -72,19 +72,28 @@ class GestureRecognizer:
         # State Tracking
         self.is_currently_engaged = False
         
+        # Hysteresis Schmitt Trigger Memory per-Jari (Melenyapkan 100% Boundary Flickering)
+        self.finger_states = {
+            'index': False,
+            'middle': False,
+            'ring': False,
+            'pinky': False
+        }
+        
         # Bi-directional Debouncing (Pencegah False Positive & False Drop)
         self.engage_frames_count = 0
         self.release_frames_count = 0
         self.REQUIRED_ENGAGE_FRAMES = 2   # Cukup 2 frame stabil untuk mengunci (Cepat & Anti-glitch)
         self.REQUIRED_RELEASE_FRAMES = 3  # Wajib 3 frame tangan terbuka untuk melepas rem
 
-    def is_finger_extended_3d(self, lm_list, mcp_id, pip_id, tip_id, threshold_ratio=1.35):
+    def is_finger_extended_3d(self, lm_list, mcp_id, pip_id, tip_id, finger_key=None):
         """
-        Menilai kelurusan jari menggunakan 3D Phalanx Extension Ratio:
+        Menilai kelurusan jari menggunakan 3D Phalanx Extension Ratio & Hysteresis Schmitt Trigger:
         Ratio = dist_3d(Tip, MCP) / dist_3d(PIP, MCP)
-        - Jari Lurus: Ujung jari menjauhi pangkal (Ratio ~2.0 - 2.5).
-        - Jari Tertekuk/Mengepal: Ujung melipat kembali ke pangkal (Ratio ~0.4 - 0.7).
-        - Bersifat 100% Invarian terhadap kompresi perspektif 2D kamera saat tangan dimiringkan!
+        - Ambang Aktif (Lurus): Ratio >= 1.40
+        - Ambang Lepas (Tekuk): Ratio < 1.25
+        - Deadband selebar 0.15 melenyapkan 100% osilasi status jari (Anti-flickering).
+        - Bersifat 100% Invarian terhadap kompresi perspektif 2D kamera saat tangan dimiringkan.
         """
         mcp = lm_list[mcp_id]
         pip = lm_list[pip_id]
@@ -97,7 +106,20 @@ class GestureRecognizer:
             return False
             
         ratio = d_tip_mcp / d_pip_mcp
-        return ratio >= threshold_ratio
+        
+        # Schmitt Trigger State Hysteresis
+        if finger_key and finger_key in self.finger_states:
+            prev_state = self.finger_states[finger_key]
+            if prev_state:
+                # Sedang lurus: Hanya jatuh ke tekuk jika ratio turun di bawah 1.25
+                new_state = (ratio >= 1.25)
+            else:
+                # Sedang tekuk: Hanya naik ke lurus jika ratio tembus di atas 1.40
+                new_state = (ratio >= 1.40)
+            self.finger_states[finger_key] = new_state
+            return new_state
+            
+        return ratio >= 1.35
 
     def get_fingers_up(self, lm_list):
         """
@@ -108,16 +130,16 @@ class GestureRecognizer:
         if len(lm_list) < 21:
             return fingers
 
-        # Konfigurasi Sendi: (MCP, PIP, TIP)
+        # Konfigurasi Sendi: (MCP, PIP, TIP, finger_key)
         finger_joints = [
-            (5, 6, 8),    # Telunjuk
-            (9, 10, 12),  # Tengah
-            (13, 14, 16), # Manis
-            (17, 18, 20)  # Kelingking
+            (5, 6, 8, 'index'),
+            (9, 10, 12, 'middle'),
+            (13, 14, 16, 'ring'),
+            (17, 18, 20, 'pinky')
         ]
 
-        for mcp, pip, tip in finger_joints:
-            is_up = self.is_finger_extended_3d(lm_list, mcp, pip, tip)
+        for mcp, pip, tip, key in finger_joints:
+            is_up = self.is_finger_extended_3d(lm_list, mcp, pip, tip, finger_key=key)
             fingers.append(1 if is_up else 0)
             
         return fingers
@@ -131,26 +153,30 @@ class GestureRecognizer:
             self.reset_smoothing()
             return False, None
 
-        # Evaluasi Status Jari berbasis 3D Phalanx
-        is_index_up = self.is_finger_extended_3d(lm_list, 5, 6, 8)
-        is_middle_up = self.is_finger_extended_3d(lm_list, 9, 10, 12)
-        is_ring_up = self.is_finger_extended_3d(lm_list, 13, 14, 16)
+        # Evaluasi Status Jari berbasis 3D Phalanx & Hysteresis Schmitt Trigger
+        is_index_up = self.is_finger_extended_3d(lm_list, 5, 6, 8, finger_key='index')
+        is_middle_up = self.is_finger_extended_3d(lm_list, 9, 10, 12, finger_key='middle')
+        is_ring_up = self.is_finger_extended_3d(lm_list, 13, 14, 16, finger_key='ring')
         
         # =======================================================
-        # KALKULASI KEMIRINGAN LINEAR TERNORMALISASI (BEBAS SINGULARITAS)
+        # KALKULASI KEMIRINGAN LINEAR TERNORMALISASI 3D
         # =======================================================
         # Mengukur perbedaan vertikal antara ujung telunjuk dan pergelangan tangan,
-        # dinormalisasi terhadap jarak tulang telapak tangan (P0 ke P5).
+        # dinormalisasi terhadap jarak tulang telapak tangan 3D (P0 ke P5).
+        # Jarak 3D konstan mutlak, mencegah penyusutan skala saat pergelangan ditundukkan.
         wrist = lm_list[0]
         index_tip = lm_list[8]
         index_base = lm_list[5]
 
-        ref_dist = math.hypot(index_base[1] - wrist[1], index_base[2] - wrist[2])
-        if ref_dist == 0:
-            ref_dist = 1.0
+        dx_base = index_base[1] - wrist[1]
+        dy_base = index_base[2] - wrist[2]
+        dz_base = (index_base[3] - wrist[3]) if len(index_base) >= 4 else 0.0
+        ref_dist_3d = math.sqrt(dx_base**2 + dy_base**2 + dz_base**2)
+        if ref_dist_3d == 0:
+            ref_dist_3d = 1.0
 
-        # Kemiringan linear (skala persen terhadap panjang telapak)
-        raw_tilt = ((index_tip[2] - wrist[2]) / ref_dist) * 100
+        # Kemiringan linear (skala persen terhadap panjang tulang telapak tangan 3D)
+        raw_tilt = ((index_tip[2] - wrist[2]) / ref_dist_3d) * 100
         current_time = time.time()
 
         # =======================================================
@@ -196,3 +222,9 @@ class GestureRecognizer:
         self.is_currently_engaged = False
         self.engage_frames_count = 0
         self.release_frames_count = 0
+        self.finger_states = {
+            'index': False,
+            'middle': False,
+            'ring': False,
+            'pinky': False
+        }
