@@ -6,10 +6,10 @@ import pyautogui
 import pygetwindow as gw
 
 class SystemController:
-    # Deadzone diatur pada 4 derajat rotasi fisik.
-    # Karena input kemiringan telah menggunakan sudut 3D derajat murni dan disaring oleh
-    # 1 Euro Filter, nilai 4 derajat memberikan respon cepat namun kebal dari tremor otot.
-    def __init__(self, sensitivity=0.8, deadzone=4):
+    # Deadzone diatur pada 8 skala linear.
+    # Menyerap seluruh tremor otot mikroskopis saat kursor netral/diam,
+    # namun langsung merespon saat pergelangan tangan ditekuk secara sengaja.
+    def __init__(self, sensitivity=0.8, deadzone=8):
         self.sensitivity = sensitivity 
         self.deadzone = deadzone       
         
