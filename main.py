@@ -53,7 +53,6 @@ def main():
             lm_list = tracker.get_position(img)
 
             status_text = "NO HAND"
-            conf_val = recognizer.last_confidence
             current_tilt_val = None
 
             if len(lm_list) != 0:
@@ -101,10 +100,15 @@ def main():
                 cv2.putText(img, f'FPS: {int(fps)}', (10, 30), cv2.FONT_HERSHEY_PLAIN, 1.8, (255, 0, 0), 2)
                 cv2.putText(img, f'Status: {status_text}', (10, 65), cv2.FONT_HERSHEY_PLAIN, 1.8, status_color, 2)
                 
-                # Informasi Probabilitas & Sudut Derajat
-                conf_pct = int(recognizer.last_confidence * 100)
-                tilt_info = f"{current_tilt_val:.1f} deg" if current_tilt_val is not None else "-"
-                cv2.putText(img, f'Confidence: {conf_pct}% | Pitch: {tilt_info}', (10, 100), cv2.FONT_HERSHEY_PLAIN, 1.4, (200, 200, 200), 2)
+                # Informasi Tuas Kemiringan (Tilt Offset)
+                if controller.is_engaged and controller.anchor_tilt is not None and current_tilt_val is not None:
+                    offset = current_tilt_val - controller.anchor_tilt
+                    tilt_info = f"Offset: {offset:+.1f} (Deadzone: {controller.deadzone})"
+                elif current_tilt_val is not None:
+                    tilt_info = f"Tilt: {current_tilt_val:.1f}"
+                else:
+                    tilt_info = "-"
+                cv2.putText(img, f'Throttle: {tilt_info}', (10, 100), cv2.FONT_HERSHEY_PLAIN, 1.4, (200, 200, 200), 2)
                 
                 cv2.imshow(window_name, img)
 
