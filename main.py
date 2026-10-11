@@ -11,8 +11,17 @@ from controller import SystemController
 
 def main():
     cap = cv2.VideoCapture(0)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    
+    # =========================================================================
+    # OPTICAL ENHANCEMENT: True Widescreen 16:9 HD & Zero-Lag Buffer
+    # Beralih ke 1280x720 membuka sensor widescreen native webcam (Zoom Out alami),
+    # memberikan bidang pandang (FOV) yang jauh lebih luas bagi pergerakan tangan.
+    # =========================================================================
+    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1) # Memangkas antrean frame ke 0 ms latency
+    cap.set(cv2.CAP_PROP_FPS, 60)
 
     tracker = HandTracker(detection_con=0.8, track_con=0.8)
     recognizer = GestureRecognizer()
@@ -22,6 +31,8 @@ def main():
     
     cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
     cv2.setWindowProperty(window_name, cv2.WND_PROP_TOPMOST, 1)
+    # Default ukuran jendela luas (Widescreen 960x540) yang proporsional dan terasa lega
+    cv2.resizeWindow(window_name, 960, 540)
     show_window = True
 
     print("==================================================")
@@ -35,6 +46,7 @@ def main():
     print("  3. Buka seluruh tangan (Rentangkan Jari) untuk mengerem.")
     print("==================================================")
     print("Fitur UI & Mode Latar Belakang:")
+    print("  - Kualitas Video HD 720p Widescreen (Zoom Out & Lapang).")
     print("  - Jendela Kamera Selalu di Atas (Always on Top).")
     print("  - Klik silang 'X' untuk masuk Mode Latar Belakang (Headless).")
     print("  - Tekan 'q' pada jendela ATAU Ctrl+C di terminal untuk keluar.")
@@ -49,6 +61,8 @@ def main():
                 break
 
             img = cv2.flip(img, 1)
+            h, w, _ = img.shape
+            
             img = tracker.find_hands(img)
             lm_list = tracker.get_position(img)
 
@@ -68,10 +82,18 @@ def main():
                     cx, cy = index_tip[1], index_tip[2]
                     wx, wy = wrist[1], wrist[2]
                     
-                    # Visualisasi Tuas Gas (Garis yang menghubungkan engsel pergelangan ke telunjuk)
-                    cv2.line(img, (wx, wy), (cx, cy), (0, 255, 255), 4) # Garis Kuning Penghubung
-                    cv2.circle(img, (wx, wy), 10, (255, 0, 0), cv2.FILLED) # Titik Biru di Engsel
-                    cv2.circle(img, (cx, cy), 15, (0, 255, 0), cv2.FILLED) # Titik Hijau di Ujung
+                    # =========================================================
+                    # VISUALISASI SCI-FI HOLOGRAPHIC (JARVIS REPULSOR BEAM)
+                    # =========================================================
+                    # Garis Laser Tuas Gas (Neon Cyan Glow)
+                    cv2.line(img, (wx, wy), (cx, cy), (255, 230, 0), 3, cv2.LINE_AA)
+                    # Engsel Pergelangan Tangan (Gold Arc Anchor)
+                    cv2.circle(img, (wx, wy), 10, (0, 165, 255), cv2.FILLED, cv2.LINE_AA)
+                    cv2.circle(img, (wx, wy), 14, (255, 255, 255), 1, cv2.LINE_AA)
+                    # Reticle Target Hologram di Ujung Telunjuk (Arc Reactor Dual-Ring)
+                    cv2.circle(img, (cx, cy), 8, (0, 255, 255), cv2.FILLED, cv2.LINE_AA)
+                    cv2.circle(img, (cx, cy), 16, (255, 220, 0), 2, cv2.LINE_AA)
+                    cv2.circle(img, (cx, cy), 22, (0, 215, 255), 1, cv2.LINE_AA)
                     
             else:
                 recognizer.reset_smoothing()
@@ -92,23 +114,36 @@ def main():
                     show_window = False
                     
             if show_window:
-                # Warna status dinamis
-                status_color = (0, 255, 0) if "ENGAGED" in status_text or "SCROLL" in status_text or "SWIPED" in status_text else (0, 200, 255)
-                if status_text == "NO HAND":
-                    status_color = (0, 0, 255)
+                # =============================================================
+                # GLASSMORPHIC HUD TOP BAR (Translucent Futuristic Overlay)
+                # =============================================================
+                hud_h = 88
+                overlay = img.copy()
+                cv2.rectangle(overlay, (0, 0), (w, hud_h), (12, 16, 24), cv2.FILLED)
+                cv2.addWeighted(overlay, 0.75, img, 0.25, 0, img)
+                # Garis aksen bawah HUD (Neon Cyan Accent)
+                cv2.line(img, (0, hud_h), (w, hud_h), (255, 200, 0), 2, cv2.LINE_AA)
 
-                cv2.putText(img, f'FPS: {int(fps)}', (10, 30), cv2.FONT_HERSHEY_PLAIN, 1.8, (255, 0, 0), 2)
-                cv2.putText(img, f'Status: {status_text}', (10, 65), cv2.FONT_HERSHEY_PLAIN, 1.8, status_color, 2)
+                # Warna status badge dinamis
+                status_color = (0, 255, 120) if ("ENGAGED" in status_text or "SCROLL" in status_text or "SWIPED" in status_text) else (0, 200, 255)
+                if status_text == "NO HAND":
+                    status_color = (60, 60, 230)
+
+                # Judul Sistem & Telemetri Kiri
+                cv2.putText(img, "JARVIS VISION // MARK VII CONTROLLER", (20, 28), cv2.FONT_HERSHEY_DUPLEX, 0.65, (0, 215, 255), 1, cv2.LINE_AA)
+                cv2.putText(img, f"STATUS: {status_text}", (20, 66), cv2.FONT_HERSHEY_DUPLEX, 0.85, status_color, 2, cv2.LINE_AA)
                 
-                # Informasi Tuas Kemiringan (Tilt Offset)
+                # Telemetri Kanan (FPS & Throttle Status)
+                cv2.putText(img, f"FPS: {int(fps)}", (w - 150, 28), cv2.FONT_HERSHEY_DUPLEX, 0.65, (200, 200, 200), 1, cv2.LINE_AA)
+                
                 if controller.is_engaged and controller.anchor_tilt is not None and current_tilt_val is not None:
                     offset = current_tilt_val - controller.anchor_tilt
-                    tilt_info = f"Offset: {offset:+.1f} (Deadzone: {controller.deadzone})"
+                    tilt_info = f"Offset: {offset:+.1f} (DZ: {controller.deadzone})"
                 elif current_tilt_val is not None:
                     tilt_info = f"Tilt: {current_tilt_val:.1f}"
                 else:
-                    tilt_info = "-"
-                cv2.putText(img, f'Throttle: {tilt_info}', (10, 100), cv2.FONT_HERSHEY_PLAIN, 1.4, (200, 200, 200), 2)
+                    tilt_info = "STANDBY"
+                cv2.putText(img, f"THROTTLE: {tilt_info}", (w - 410, 66), cv2.FONT_HERSHEY_DUPLEX, 0.75, (255, 255, 255), 1, cv2.LINE_AA)
                 
                 cv2.imshow(window_name, img)
 
