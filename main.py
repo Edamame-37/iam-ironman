@@ -53,9 +53,12 @@ def main():
             lm_list = tracker.get_position(img)
 
             status_text = "NO HAND"
+            conf_val = recognizer.last_confidence
+            current_tilt_val = None
 
             if len(lm_list) != 0:
                 is_active, current_tilt = recognizer.get_joystick_state(lm_list)
+                current_tilt_val = current_tilt
                 status_text = controller.process_dynamic_motion(is_active, current_tilt)
                 
                 if is_active:
@@ -90,8 +93,18 @@ def main():
                     show_window = False
                     
             if show_window:
-                cv2.putText(img, f'FPS: {int(fps)}', (10, 30), cv2.FONT_HERSHEY_PLAIN, 2, (255, 0, 0), 2)
-                cv2.putText(img, f'Status: {status_text}', (10, 70), cv2.FONT_HERSHEY_PLAIN, 2, (0, 255, 0), 2)
+                # Warna status dinamis
+                status_color = (0, 255, 0) if "ENGAGED" in status_text or "SCROLL" in status_text or "SWIPED" in status_text else (0, 200, 255)
+                if status_text == "NO HAND":
+                    status_color = (0, 0, 255)
+
+                cv2.putText(img, f'FPS: {int(fps)}', (10, 30), cv2.FONT_HERSHEY_PLAIN, 1.8, (255, 0, 0), 2)
+                cv2.putText(img, f'Status: {status_text}', (10, 65), cv2.FONT_HERSHEY_PLAIN, 1.8, status_color, 2)
+                
+                # Informasi Probabilitas & Sudut Derajat
+                conf_pct = int(recognizer.last_confidence * 100)
+                tilt_info = f"{current_tilt_val:.1f} deg" if current_tilt_val is not None else "-"
+                cv2.putText(img, f'Confidence: {conf_pct}% | Pitch: {tilt_info}', (10, 100), cv2.FONT_HERSHEY_PLAIN, 1.4, (200, 200, 200), 2)
                 
                 cv2.imshow(window_name, img)
 
