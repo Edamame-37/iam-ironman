@@ -64,7 +64,11 @@ class SystemController:
                             return "SWIPED: PREV SLIDE"
                 else:
                     if abs(offset_tilt) > self.deadzone:
-                        raw_speed = (abs(offset_tilt) - self.deadzone) * self.sensitivity
+                        excess = abs(offset_tilt) - self.deadzone
+                        # Kurva Akselerasi Power-Law (Non-Linear):
+                        # Kemiringan mikro menghasilkan scroll santai 1 baris (sempurna membaca dokumen)
+                        # Kemiringan dalam melesatkan kecepatan secara eksponensial tanpa lelah
+                        raw_speed = (excess ** 1.3) * (self.sensitivity * 0.4)
                         self.smoothed_speed = (self.speed_ema_alpha * raw_speed) + ((1 - self.speed_ema_alpha) * self.smoothed_speed)
                         
                         final_speed = int(self.smoothed_speed)
